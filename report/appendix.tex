@@ -1,0 +1,173 @@
+\appendix
+
+\section{Architecture Details}
+
+\subsection{LSTM Autoencoder Block Diagram}
+\begin{verbatim}
+Input Piano-Roll (88 × 64)
+    ↓
+Flatten to sequence (64 timesteps × 88 features)
+    ↓
+Bidirectional LSTM Encoder (hidden=256)
+    ↓
+Final hidden state → Latent vector z (256-dim)
+    ↓
+Project & repeat for decoder timesteps
+    ↓
+LSTM Decoder (hidden=256)
+    ↓
+Dense output layer (88 channels)
+    ↓
+Sigmoid activation
+    ↓
+Output Piano-Roll (88 × 64)
+    ↓
+Focal Loss vs. target
+\end{verbatim}
+
+\subsection{Beta-VAE Architecture}
+\begin{verbatim}
+Input Piano-Roll (88 × 64)
+    ↓
+Bidirectional LSTM Encoder
+    ↓
+Linear layer → μ, log σ² (512-dim latent)
+    ↓
+Reparameterization: z = μ + ε·σ (ε ~ N(0,I))
+    ↓
+LSTM Decoder
+    ↓
+Output Piano-Roll
+    ↓
+Loss = Reconstruction + β·KL_divergence
+      where β linearly increases 0→1 over 2 epochs
+\end{verbatim}
+
+\subsection{Transformer Decoder Architecture}
+\begin{verbatim}
+REMI Token Sequence (max length 512)
+    ↓
+Token Embedding (512-dim)
+    ↓
++ Positional Encoding (sinusoidal)
+    ↓
++ Genre Embedding (16-dim, concatenated)
+    ↓
+6-layer Transformer Decoder
+  (8 attention heads, 512 hidden dim, feedforward 2048)
+    ↓
+Linear layer to vocabulary (512 tokens)
+    ↓
+Softmax → Token probability distribution
+    ↓
+Cross-entropy loss vs. next token
+\end{verbatim}
+
+\subsection{Training Pipeline Data Flow}
+\begin{verbatim}
+Raw MIDI Files (20 files)
+    ↓
+music21 MIDI parser
+    ↓
+Piano-roll conversion (88 × 64 frames) OR Token sequence
+    ↓
+Sparsity filtering (threshold=0.99)
+    ↓
+300 training segments → 240 train / 60 validation
+    ↓
+Model Training (2 epochs AE, 2 epochs VAE, 1 epoch Transformer)
+    ↓
+Checkpoint saving (outputs/checkpoints/)
+    ↓
+Generation:
+  - AE: Encode test sample → latent z → Decode
+  - VAE: Sample z ~ N(0,I) → Decode
+  - Transformer: Condition on genre → Autoregressive generation
+  - Markov: Sample from transition matrix
+    ↓
+Piano-roll to MIDI conversion (mido library)
+    ↓
+Save MIDI files (outputs/generated_midis/)
+\end{verbatim}
+
+\section{Hyperparameter Ablation Notes}
+
+For production use, consider exploring:
+
+\begin{table}[h]
+\centering
+\caption{Recommended Hyperparameter Search Space}
+\label{tab:ablation}
+\begin{tabular}{lcc}
+\toprule
+\textbf{Parameter} & \textbf{Quick-Run} & \textbf{Production} \\
+\midrule
+Hidden Dimension & 256 & 256, 512 \\
+Latent Dimension (VAE) & 512 & 256, 512, 1024 \\
+Batch Size & 32 & 64, 128 \\
+Learning Rate & 0.001 & 0.0001--0.001 \\
+Beta Schedule (VAE) & Linear over 2 ep. & Exponential, Step \\
+Epochs & 1--2 & 50--100 \\
+Dropout (if added) & 0.0 & 0.1--0.3 \\
+Focal Loss γ & 2.0 & 1.0, 2.0, 3.0 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\section{Known Issues and Workarounds}
+
+\subsection{pretty\_midi Compatibility (Python 3.13)}
+The official \texttt{pretty\_midi} package has import issues on Python 3.13. Current workaround:
+\begin{itemize}
+    \item A minimal shim (\texttt{pretty\_midi.py}) provides core MIDI I/O
+    \item For production, monitor package updates and switch to official release when available
+\end{itemize}
+
+\subsection{miditok Private API}
+Token decoding uses private API (\texttt{\_ids\_to\_tokens}):
+\begin{itemize}
+    \item Works currently but not guaranteed stable across versions
+    \item Recommend implementing custom decode wrapper or waiting for public API
+\end{itemize}
+
+\subsection{File Extension Handling}
+Windows MIDI discovery scans both \texttt{.mid} and \texttt{.midi} extensions to handle format inconsistencies.
+
+\section{Evaluation Metrics (Placeholder)}
+
+The framework supports objective music evaluation:
+
+\begin{itemize}
+    \item \textbf{Pitch Class Histogram (PCH)}: Measures pitch distribution similarity
+    \item \textbf{Pitch Transition (PT)}: Compares bigram statistics
+    \item \textbf{Rhythm Diversity}: Quantifies inter-onset time variation
+    \item \textbf{Pitch Entropy}: Shannon entropy of pitch distributions
+    \item \textbf{Length Distribution}: Compares note duration distributions
+\end{itemize}
+
+Implementations in \texttt{src/evaluation/} are ready for integration with generated outputs.
+
+\section{Reproduction Instructions}
+
+To reproduce this study from scratch:
+
+\begin{enumerate}
+    \item Clone repository and install dependencies: \texttt{pip install -r requirements.txt}
+    
+    \item Generate synthetic MIDI: Create 20 MIDI files under \texttt{data/raw\_midi/\{2004,...,2018\}/}
+    
+    \item Preprocess: \texttt{python -m src.preprocessing.piano\_roll} (generates \texttt{data/processed/})
+    
+    \item Train all models:
+    \begin{verbatim}
+    python -m src.training.train_ae
+    python -m src.training.train_vae
+    python -m src.training.train_transformer
+    \end{verbatim}
+    
+    \item Generate: \texttt{python src/generation/generate\_music.py --model all}
+    
+    \item Evaluate: \texttt{python -m src.evaluation.metrics}
+\end{enumerate}
+
+For full MAESTRO results, download MAESTRO v3.0.0 and extract year-folders to \texttt{data/raw\_midi/}. All other steps remain unchanged.

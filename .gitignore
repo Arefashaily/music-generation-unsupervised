@@ -1,0 +1,11 @@
+__pycache__/
+*.pyc
+.venv/
+venv/
+.ipynb_checkpoints/
+
+# Large or generated files
+*.pt
+outputs/
+data/processed/
+notebooks/data/
